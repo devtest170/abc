@@ -1,0 +1,121 @@
+From 3e21dc7b7e1c5cfebc8e9b8ffc33a4b88a102398 Mon Sep 17 00:00:00 2001
+From: Rudi Heitbaum <rudi@heitbaum.com>
+Date: Sat, 30 Mar 2024 03:19:33 +0000
+Subject: [PATCH] Make LZMA support optional
+
+---
+ CMakeLists.txt                         | 19 +++++++++++--------
+ src/iptvsimple/Epg.cpp                 |  7 ++++++-
+ src/iptvsimple/utilities/FileUtils.cpp |  8 +++++++-
+ 3 files changed, 24 insertions(+), 10 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 10979db..381791e 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -6,20 +6,17 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${PROJECT_SOURCE_DIR})
+ find_package(Kodi REQUIRED)
+ find_package(pugixml REQUIRED)
+ find_package(ZLIB REQUIRED)
+-find_package(lzma REQUIRED)
++find_package(lzma)
+ 
+ include_directories(${KODI_INCLUDE_DIR}/.. # Hack way with "/..", need bigger Kodi cmake rework to match right include ways
+                     ${PUGIXML_INCLUDE_DIRS}
+-                    ${ZLIB_INCLUDE_DIRS}
+-                    ${LZMA_INCLUDE_DIRS})
++                    ${ZLIB_INCLUDE_DIRS})
+ 
+ set(DEPLIBS ${PUGIXML_LIBRARIES}
+-            ${ZLIB_LIBRARIES}
+-            ${LZMA_LIBRARIES})
++            ${ZLIB_LIBRARIES})
+ 
+ message(STATUS "PUGIXML_LIBRARIES: ${PUGIXML_LIBRARIES}")
+ message(STATUS "ZLIB_LIBRARIES: ${ZLIB_LIBRARIES}")
+-message(STATUS "LZMA_LIBRARIES: ${LZMA_LIBRARIES}")
+ 
+ set(IPTV_SOURCES src/addon.cpp
+                  src/IptvSimple.cpp
+@@ -81,8 +78,14 @@ set(IPTV_HEADERS src/addon.h
+ addon_version(pvr.iptvsimple IPTV)
+ add_definitions(-DIPTV_VERSION=${IPTV_VERSION})
+ 
+-if(WIN32)
+-  add_definitions(-DLZMA_API_STATIC)
++if(lzma_FOUND)
++  include_directories(${LZMA_INCLUDE_DIRS})
++  list(APPEND DEPLIBS ${LZMA_LIBRARIES})
++  message(STATUS "LZMA_LIBRARIES: ${LZMA_LIBRARIES}")
++  add_definitions(-DWITH_LZMA)
++  if(WIN32)
++    add_definitions(-DLZMA_API_STATIC)
++  endif()
+ endif()
+ 
+ build_addon(pvr.iptvsimple IPTV DEPLIBS)
+diff --git a/src/iptvsimple/Epg.cpp b/src/iptvsimple/Epg.cpp
+index 9ac6286..8421049 100644
+--- a/src/iptvsimple/Epg.cpp
++++ b/src/iptvsimple/Epg.cpp
+@@ -195,12 +195,17 @@ char* Epg::FillBufferFromXMLTVData(std::string& data, std::string& decompressedD
+   else if (data[0] == '\xFD' && data[1] == '7' && data[2] == 'z' &&
+            data[3] == 'X' && data[4] == 'Z' && data[5] == '\x00')
+   {
++#if defined (WITH_LZMA)
+     if (!FileUtils::XzDecompress(data, decompressedData))
+     {
+       Logger::Log(LEVEL_ERROR, "%s - Invalid EPG file '%s': unable to decompress xz/7z file.", __FUNCTION__, m_xmltvLocation.c_str());
+       return nullptr;
+     }
+     buffer = &(decompressedData[0]);
++#else
++    Logger::Log(LEVEL_ERROR, "%s - Invalid EPG file '%s': xz/7z decompression unsupported.", __FUNCTION__, m_xmltvLocation.c_str());
++    return nullptr;
++#endif
+   }
+   else
+   {
+@@ -621,4 +626,4 @@ void Epg::MergeEpgDataIntoMedia()
+     if (channelEpg && !channelEpg->GetEpgEntries().empty())
+       mediaEntry.UpdateFrom(channelEpg->GetEpgEntries().begin()->second, m_genreMappings);
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/src/iptvsimple/utilities/FileUtils.cpp b/src/iptvsimple/utilities/FileUtils.cpp
+index 05e2a34..957e3f7 100644
+--- a/src/iptvsimple/utilities/FileUtils.cpp
++++ b/src/iptvsimple/utilities/FileUtils.cpp
+@@ -9,7 +9,9 @@
+ 
+ #include "../InstanceSettings.h"
+ 
+-#include <lzma.h>
++#if defined (WITH_LZMA)
++  #include <lzma.h>
++#endif
+ #include <zlib.h>
+ 
+ using namespace iptvsimple;
+@@ -134,6 +136,7 @@ bool FileUtils::GzipInflate(const std::string& compressedBytes, std::string& unc
+ 
+ bool FileUtils::XzDecompress(const std::string& compressedBytes, std::string& uncompressedBytes)
+ {
++#if defined (WITH_LZMA)
+   if (compressedBytes.size() == 0)
+   {
+     uncompressedBytes = compressedBytes;
+@@ -167,6 +170,9 @@ bool FileUtils::XzDecompress(const std::string& compressedBytes, std::string& un
+   lzma_end (&strm);
+ 
+   return true;
++#else
++  return false;
++#endif
+ }
+ 
+ int FileUtils::GetCachedFileContents(std::shared_ptr<iptvsimple::InstanceSettings>& settings,
+-- 
+2.43.0
+
